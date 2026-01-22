@@ -1,6 +1,6 @@
 # ARC Raiders Real-Time Event Monitor 📡
 
-##All made with Google Gemini 3 Pro as a test.
+## All made with Google Gemini 3 Pro as a test.
 
 A lightweight Python-based terminal dashboard that tracks active events in **ARC Raiders** using the MetaForge API. It provides a real-time, flicker-free overview of ongoing missions, their locations, and time remaining.
 
