@@ -1,97 +1,126 @@
-import time
 import requests
+import time
 from datetime import datetime, timezone, timedelta
-from rich.live import Live
-from rich.table import Table
 from rich.console import Console
+from rich.table import Table
+from rich.live import Live
 from rich import box
 
 # --- KONFIGURATION ---
 API_URL = "https://metaforge.app/api/arc-raiders/events-schedule"
-REFRESH_RATE = 30 
-# Vi använder denna endast för visningen av klockan längst ner
-SWEDISH_TIME_ZONE = timezone(timedelta(hours=1))
+# Vi sätter svensk tidszon (UTC+1)
+SWEDISH_TZ = timezone(timedelta(hours=1))
 
-MAJOR_EVENT_NAMES = {
-    "Night Raid", "Electromagnetic Storm", "Hidden Bunker", 
-    "Locked Gate", "Harvester", "Matriarch", "Launch Tower Loot"
+# --- FÄRGKARTA ---
+EVENT_COLORS = {
+    "Prospecting Probes": "grey37",
+    "Electromagnetic Storm": "grey53",
+    "Husk Graveyard": "grey70",
+    "Lush Blooms": "grey85",
+    "Hidden Bunker": "white",
+    "Locked Gate": "grey100",
+    "Night Raid": "orange1",
+    "Harvester": "dark_orange",
+    "Matriarch": "orange_red1",
+    "Launch Tower Loot": "red3"
 }
 
-def fetch_active_events():
-    active_rows = []
+console = Console()
+
+def get_color(name):
+    """Returnerar rätt färg baserat på eventets namn."""
+    return EVENT_COLORS.get(name, "grey62")
+
+def generate_table():
+    """Hämtar data och bygger den visuella tabellen."""
+    # Skapar en tabell som fyller hela bredden (expand=True)
+    table = Table(
+        title="[bold cyan]A R C  M O N I T O R[/][dim] │ PYTHON EDITION[/]",
+        box=box.SIMPLE_HEAD,
+        expand=True,
+        show_header=False,
+        caption_justify="left"
+    )
     
+    # Kolumn 1: Event-namn | Kolumn 2: Tid/Status (högerställd)
+    table.add_column("Event Info", ratio=3)
+    table.add_column("Status/Time", justify="right", ratio=1)
+
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        # Sätt en User-Agent för att vara schysst mot API:et
+        headers = {'User-Agent': 'Python-Monitor-Client'}
         response = requests.get(API_URL, headers=headers, timeout=10)
         response.raise_for_status()
-        json_payload = response.json()
         
-        events_list = json_payload.get('data', [])
+        data = response.json().get('data', [])
+        now_ts = datetime.now(timezone.utc).timestamp() * 1000
         
-        # VIKTIGT: Vi använder ren UTC här för att matcha API:ets Unix-tid perfekt
-        now_ts = datetime.now(timezone.utc).timestamp() 
-
-        for event in events_list:
-            s_raw = event.get('startTime')
-            e_raw = event.get('endTime')
-            
-            if s_raw is None or e_raw is None:
-                continue
-
-            # Konvertera ms till sekunder
-            start_ts = s_raw / 1000
-            end_ts = e_raw / 1000
-
-            # Jämför nuvarande UTC-tid med händelsens tider
-            if start_ts <= now_ts <= end_ts:
-                mins_left = int((end_ts - now_ts) / 60)
+        # Sortera händelserna kronologiskt
+        data.sort(key=lambda x: x['startTime'])
+        
+        # --- SEKTION: AKTIVA EVENTS ---
+        table.add_row("[bold green]LIVE STATUS[/]", "")
+        active_found = False
+        
+        for event in data:
+            if event['startTime'] <= now_ts <= event['endTime']:
+                color = get_color(event['name'])
+                mins_left = int((event['endTime'] - now_ts) / 1000 / 60)
                 
-                e_name = event.get('name', 'Unknown')
-                m_name = event.get('map', 'Unknown Map')
-                
-                category = "major" if e_name in MAJOR_EVENT_NAMES else "minor"
-                color = "bold red" if category == "major" else "green"
+                # Lägg till rad med färg och padding via tabell-systemet
+                table.add_row(
+                    f"[{color}]● {event['name'].upper()} - {event['map']}[/]",
+                    f"[{color}]ACTIVE │ {mins_left}m left[/]"
+                )
+                active_found = True
+        
+        if not active_found:
+            table.add_row("[dim]    Inga aktiva händelser just nu.[/]", "")
 
-                active_rows.append(f"[{color}]{e_name} - {m_name}({category}) Ends in {mins_left}m[/{color}]")
+        table.add_section() # En liten horisontell linje
+        
+        # --- SEKTION: KOMMANDE EVENTS (Full lista) ---
+        table.add_row("[grey50]FULL UPCOMING SEQUENCE[/]", "")
+        now_local = datetime.now(SWEDISH_TZ)
+        today_day = now_local.day
+        
+        for event in data:
+            if event['startTime'] > now_ts:
+                color = get_color(event['name'])
+                start_dt = datetime.fromtimestamp(event['startTime'] / 1000, tz=SWEDISH_TZ)
                 
+                # Om eventet är en annan dag, visa datumet
+                if start_dt.day != today_day:
+                    time_display = start_dt.strftime("%d/%m %H:%M")
+                else:
+                    time_display = start_dt.strftime("      %H:%M")
+                
+                table.add_row(
+                    f"[{color}]{event['name']} - {event['map']}[/]",
+                    f"[{color}]{time_display}[/]"
+                )
+
+        # Footer med klockslag för senaste scanningen
+        scan_time = now_local.strftime("%H:%M:%S")
+        table.caption = f"[dim]LAST SCAN: {scan_time} │ Scroll up to see full history[/]"
+        
     except Exception as e:
-        return [f"[red]Systemfel: {type(e).__name__}[/red]"]
+        table.add_row(f"[red]Error fetching data: {e}[/]", "")
 
-    return active_rows
-
-def generate_dashboard():
-    # Klockan visar din lokala svenska tid (UTC+1)
-    local_clock = datetime.now(SWEDISH_TIME_ZONE).strftime('%H:%M:%S')
-    
-    table = Table(
-        title="[bold cyan]ARC RAIDERS REAL-TIME MONITOR[/bold cyan]", 
-        box=box.DOUBLE_EDGE,
-        caption=f"Refresh: {REFRESH_RATE}s | Local Time: {local_clock}"
-    )
-    table.add_column("Current Active Missions", justify="left", width=65)
-    
-    events = fetch_active_events()
-    if not events:
-        table.add_row("[italic dim]No active events found for the current UTC time.[/]")
-    else:
-        # Sortera Major händelser först
-        events.sort(key=lambda x: "major" not in x)
-        for event_str in events:
-            table.add_row(event_str)
-            
     return table
 
 def main():
-    console = Console()
-    console.clear()
-    
-    with Live(generate_dashboard(), console=console, refresh_per_second=1) as live:
+    # Live-läge: auto_refresh=False gör att den bara ritar om när vi säger till
+    with Live(generate_table(), auto_refresh=False, screen=False) as live:
         while True:
-            live.update(generate_dashboard())
-            time.sleep(REFRESH_RATE)
+            # Uppdatera tabellen och tvinga en omditning (refresh=True)
+            live.update(generate_table(), refresh=True)
+            
+            # Vänta 30 sekunder innan nästa API-anrop
+            time.sleep(30)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n[bold yellow]Monitor avslutad.[/bold yellow]")
+        console.print("\n[bold orange_red1]>> MONITOR DEACTIVATED.[/]")
